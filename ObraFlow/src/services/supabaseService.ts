@@ -24,7 +24,6 @@ interface UserRow {
   id: string
   nome: string
   email: string
-  senha: string
   perfil: PerfilUsuario
 }
 
@@ -108,12 +107,15 @@ function mapFuncionario(row: FuncionarioRow): Funcionario {
   }
 }
 
-function mapAtividade(row: AtividadeRow): Atividade {
+function mapAtividade(
+  row: AtividadeRow,
+  status: StatusAtividade = row.status,
+): Atividade {
   return {
     id: row.id,
     titulo: row.titulo,
     descricao: row.descricao,
-    status: row.status,
+    status,
     dataCriacao: row.data_criacao,
   }
 }
@@ -165,6 +167,102 @@ function latestApontamentoByActivity(
   return map
 }
 
+function deriveStatusFromApontamento(
+  apontamento: Pick<ApontamentoRow, 'termino'> | null | undefined,
+  fallback: StatusAtividade,
+): StatusAtividade {
+  if (!apontamento) {
+    return fallback
+  }
+
+  return apontamento.termino ? 'concluida' : 'em_andamento'
+}
+
+function mapAuthErrorMessage(message: string): string {
+  const normalizedMessage = message.toLowerCase()
+
+  if (normalizedMessage.includes('invalid login credentials')) {
+    return 'Credenciais inválidas.'
+  }
+
+  if (normalizedMessage.includes('email not confirmed')) {
+    return 'Confirme o email antes de entrar.'
+  }
+
+  return message
+}
+
+async function buildUsuarioFromProfile(
+  profile: UserRow,
+): Promise<Usuario> {
+  const client = requireSupabase()
+
+  let funcionarioId: string | null = null
+
+  if (profile.perfil === 'funcionario') {
+    const { data: funcionario, error: funcionarioError } = await client
+      .from('funcionarios')
+      .select('id')
+      .eq('user_id', profile.id)
+      .maybeSingle<{ id: string }>()
+
+    if (funcionarioError) {
+      throw new Error(
+        `Falha ao buscar vínculo do funcionário: ${funcionarioError.message}`,
+      )
+    }
+
+    if (!funcionario) {
+      throw new Error('Funcionário sem cadastro vinculado para este usuário.')
+    }
+
+    funcionarioId = funcionario.id
+  }
+
+  return {
+    id: profile.id,
+    nome: profile.nome,
+    email: profile.email,
+    perfil: profile.perfil,
+    funcionarioId,
+  }
+}
+
+export async function getAuthenticatedSupabaseUser(): Promise<Usuario | null> {
+  const client = requireSupabase()
+
+  const {
+    data: { user: authUser },
+    error: authError,
+  } = await client.auth.getUser()
+
+  if (authError) {
+    throw new Error(`Falha ao recuperar sessão do Supabase: ${authError.message}`)
+  }
+
+  if (!authUser) {
+    return null
+  }
+
+  const { data: profile, error: profileError } = await client
+    .from('users')
+    .select('id, nome, email, perfil')
+    .eq('id', authUser.id)
+    .maybeSingle<UserRow>()
+
+  if (profileError) {
+    throw new Error(`Falha ao carregar perfil público: ${profileError.message}`)
+  }
+
+  if (!profile) {
+    throw new Error(
+      'Usuário autenticado sem registro correspondente em public.users.',
+    )
+  }
+
+  return buildUsuarioFromProfile(profile)
+}
+
 export function createSupabaseService(): DataService {
   return {
     mode: 'supabase',
@@ -176,47 +274,26 @@ export function createSupabaseService(): DataService {
       ensureRequired(email, 'email')
       ensureRequired(credentials.senha, 'senha')
 
-      const { data: user, error } = await client
-        .from('users')
-        .select('id, nome, email, senha, perfil')
-        .eq('email', email)
-        .eq('senha', credentials.senha)
-        .maybeSingle<UserRow>()
+      const { error: authError } = await client.auth.signInWithPassword({
+        email,
+        password: credentials.senha,
+      })
 
-      if (error) {
-        throw new Error(`Falha ao autenticar: ${error.message}`)
+      if (authError) {
+        throw new Error(mapAuthErrorMessage(authError.message))
       }
 
-      if (!user) {
-        throw new Error('Credenciais inválidas.')
-      }
+      try {
+        const authenticatedUser = await getAuthenticatedSupabaseUser()
 
-      let funcionarioId: string | null = null
-
-      if (user.perfil === 'funcionario') {
-        const { data: funcionario, error: funcionarioError } = await client
-          .from('funcionarios')
-          .select('id')
-          .eq('user_id', user.id)
-          .maybeSingle<{ id: string }>()
-
-        if (funcionarioError) {
-          throw new Error(`Falha ao buscar vínculo do funcionário: ${funcionarioError.message}`)
+        if (!authenticatedUser) {
+          throw new Error('Sessão criada, mas o usuário autenticado não foi encontrado.')
         }
 
-        if (!funcionario) {
-          throw new Error('Funcionário sem cadastro vinculado.')
-        }
-
-        funcionarioId = funcionario.id
-      }
-
-      return {
-        id: user.id,
-        nome: user.nome,
-        email: user.email,
-        perfil: user.perfil,
-        funcionarioId,
+        return authenticatedUser
+      } catch (error) {
+        await client.auth.signOut()
+        throw error
       }
     },
 
@@ -242,65 +319,100 @@ export function createSupabaseService(): DataService {
       ensureRequired(input.cpf, 'CPF')
       ensureRequired(input.cargo, 'cargo')
       ensureRequired(input.email, 'email')
-      ensureRequired(input.senha, 'senha')
 
       const email = normalizeEmail(input.email)
 
-      const { data: existingUsers, error: existingUsersError } = await client
-        .from('users')
-        .select('id')
-        .eq('email', email)
-        .limit(1)
+      const [
+        publicUserResponse,
+        existingMatriculaResponse,
+        existingCpfResponse,
+        existingEmailResponse,
+      ] = await Promise.all([
+        client
+          .from('users')
+          .select('id, email, perfil')
+          .eq('email', email)
+          .maybeSingle<{ id: string; email: string; perfil: PerfilUsuario }>(),
+        client
+          .from('funcionarios')
+          .select('id')
+          .eq('matricula', input.matricula.trim())
+          .limit(1),
+        client
+          .from('funcionarios')
+          .select('id')
+          .eq('cpf', input.cpf.trim())
+          .limit(1),
+        client
+          .from('funcionarios')
+          .select('id')
+          .eq('email', email)
+          .limit(1),
+      ])
 
-      if (existingUsersError) {
-        throw new Error(`Falha ao validar email de usuário: ${existingUsersError.message}`)
+      if (publicUserResponse.error) {
+        throw new Error(
+          `Falha ao validar usuário no Supabase Auth: ${publicUserResponse.error.message}`,
+        )
       }
 
-      if ((existingUsers ?? []).length > 0) {
-        throw new Error('Já existe um usuário com este email.')
+      const publicUser = publicUserResponse.data
+
+      if (!publicUser) {
+        throw new Error(
+          'No modo Supabase, crie primeiro o usuário em Authentication > Users para que o perfil seja gerado em public.users.',
+        )
       }
 
-      const { data: existingMatricula, error: existingMatriculaError } = await client
-        .from('funcionarios')
-        .select('id')
-        .eq('matricula', input.matricula.trim())
-        .limit(1)
-
-      if (existingMatriculaError) {
-        throw new Error(`Falha ao validar matrícula: ${existingMatriculaError.message}`)
+      if (publicUser.perfil !== 'funcionario') {
+        throw new Error(
+          'O usuário autenticável informado precisa ter perfil "funcionario" em public.users.',
+        )
       }
 
-      if ((existingMatricula ?? []).length > 0) {
+      if (existingMatriculaResponse.error) {
+        throw new Error(
+          `Falha ao validar matrícula: ${existingMatriculaResponse.error.message}`,
+        )
+      }
+
+      if ((existingMatriculaResponse.data ?? []).length > 0) {
         throw new Error('Matrícula já cadastrada.')
       }
 
-      const { data: existingCpf, error: existingCpfError } = await client
-        .from('funcionarios')
-        .select('id')
-        .eq('cpf', input.cpf.trim())
-        .limit(1)
-
-      if (existingCpfError) {
-        throw new Error(`Falha ao validar CPF: ${existingCpfError.message}`)
+      if (existingCpfResponse.error) {
+        throw new Error(`Falha ao validar CPF: ${existingCpfResponse.error.message}`)
       }
 
-      if ((existingCpf ?? []).length > 0) {
+      if ((existingCpfResponse.data ?? []).length > 0) {
         throw new Error('CPF já cadastrado.')
       }
 
-      const { data: user, error: userError } = await client
-        .from('users')
-        .insert({
-          nome: input.nome.trim(),
-          email,
-          senha: input.senha,
-          perfil: 'funcionario',
-        })
-        .select('id')
-        .single<{ id: string }>()
+      if (existingEmailResponse.error) {
+        throw new Error(
+          `Falha ao validar email do funcionário: ${existingEmailResponse.error.message}`,
+        )
+      }
 
-      if (userError || !user) {
-        throw new Error(`Falha ao criar usuário do funcionário: ${userError?.message ?? 'erro desconhecido'}`)
+      if ((existingEmailResponse.data ?? []).length > 0) {
+        throw new Error('Já existe um funcionário com este email.')
+      }
+
+      const { data: existingLinkedFuncionario, error: existingFuncionarioByUserError } =
+        await client
+          .from('funcionarios')
+          .select('id')
+          .eq('user_id', publicUser.id)
+          .maybeSingle<{ id: string }>()
+
+      if (existingFuncionarioByUserError) {
+        throw new Error(
+          `Falha ao validar vínculo do usuário: ${existingFuncionarioByUserError.message}`,
+        )
+      }
+
+      if (existingLinkedFuncionario) {
+        throw new Error('Este usuário já está vinculado a outro funcionário.')
       }
 
       const { data: funcionario, error: funcionarioError } = await client
@@ -313,14 +425,15 @@ export function createSupabaseService(): DataService {
           equipe: input.equipe.trim() || null,
           status: input.status,
           email,
-          user_id: user.id,
+          user_id: publicUser.id,
         })
         .select('*')
         .single<FuncionarioRow>()
 
       if (funcionarioError || !funcionario) {
-        await client.from('users').delete().eq('id', user.id)
-        throw new Error(`Falha ao criar funcionário: ${funcionarioError?.message ?? 'erro desconhecido'}`)
+        throw new Error(
+          `Falha ao criar funcionário: ${funcionarioError?.message ?? 'erro desconhecido'}`,
+        )
       }
 
       return mapFuncionario(funcionario)
@@ -337,7 +450,38 @@ export function createSupabaseService(): DataService {
         throw new Error(`Falha ao listar atividades: ${error.message}`)
       }
 
-      return (data ?? []).map((row) => mapAtividade(row as AtividadeRow))
+      const atividades = (data ?? []) as AtividadeRow[]
+
+      if (atividades.length === 0) {
+        return []
+      }
+
+      const atividadeIds = atividades.map((atividade) => atividade.id)
+      const { data: apontamentosRows, error: apontamentosError } = await client
+        .from('apontamentos_atividade')
+        .select('id, atividade_id, funcionario_id, inicio, termino')
+        .in('atividade_id', atividadeIds)
+        .order('inicio', { ascending: false })
+
+      if (apontamentosError) {
+        throw new Error(
+          `Falha ao listar apontamentos das atividades: ${apontamentosError.message}`,
+        )
+      }
+
+      const latestApontamentos = latestApontamentoByActivity(
+        (apontamentosRows ?? []) as ApontamentoRow[],
+      )
+
+      return atividades.map((atividade) =>
+        mapAtividade(
+          atividade,
+          deriveStatusFromApontamento(
+            latestApontamentos.get(atividade.id),
+            atividade.status,
+          ),
+        ),
+      )
     },
 
     async createAtividade(input: CreateAtividadeInput): Promise<Atividade> {
@@ -357,7 +501,9 @@ export function createSupabaseService(): DataService {
         .single<AtividadeRow>()
 
       if (error || !data) {
-        throw new Error(`Falha ao criar atividade: ${error?.message ?? 'erro desconhecido'}`)
+        throw new Error(
+          `Falha ao criar atividade: ${error?.message ?? 'erro desconhecido'}`,
+        )
       }
 
       return mapAtividade(data)
@@ -371,7 +517,9 @@ export function createSupabaseService(): DataService {
         .order('data_atribuicao', { ascending: false })
 
       if (atribuicoesError) {
-        throw new Error(`Falha ao listar atribuições: ${atribuicoesError.message}`)
+        throw new Error(
+          `Falha ao listar atribuições: ${atribuicoesError.message}`,
+        )
       }
 
       const atribuicoes = (atribuicoesRows ?? []) as AtribuicaoRow[]
@@ -384,10 +532,7 @@ export function createSupabaseService(): DataService {
 
       const [funcionariosResponse, atividadesResponse, apontamentosResponse] =
         await Promise.all([
-          client
-            .from('funcionarios')
-            .select('id, nome')
-            .in('id', funcionarioIds),
+          client.from('funcionarios').select('id, nome').in('id', funcionarioIds),
           client
             .from('atividades')
             .select('id, titulo, descricao, status')
@@ -401,15 +546,21 @@ export function createSupabaseService(): DataService {
         ])
 
       if (funcionariosResponse.error) {
-        throw new Error(`Falha ao listar funcionários das atribuições: ${funcionariosResponse.error.message}`)
+        throw new Error(
+          `Falha ao listar funcionários das atribuições: ${funcionariosResponse.error.message}`,
+        )
       }
 
       if (atividadesResponse.error) {
-        throw new Error(`Falha ao listar atividades das atribuições: ${atividadesResponse.error.message}`)
+        throw new Error(
+          `Falha ao listar atividades das atribuições: ${atividadesResponse.error.message}`,
+        )
       }
 
       if (apontamentosResponse.error) {
-        throw new Error(`Falha ao listar apontamentos das atribuições: ${apontamentosResponse.error.message}`)
+        throw new Error(
+          `Falha ao listar apontamentos das atribuições: ${apontamentosResponse.error.message}`,
+        )
       }
 
       const funcionariosById = new Map<string, { id: string; nome: string }>()
@@ -457,7 +608,10 @@ export function createSupabaseService(): DataService {
             atividadeId: atividade.id,
             atividadeTitulo: atividade.titulo,
             atividadeDescricao: atividade.descricao,
-            atividadeStatus: atividade.status,
+            atividadeStatus: deriveStatusFromApontamento(
+              apontamento,
+              atividade.status,
+            ),
             dataAtribuicao: atribuicao.data_atribuicao,
             inicio: apontamento?.inicio ?? null,
             termino: apontamento?.termino ?? null,
@@ -495,7 +649,9 @@ export function createSupabaseService(): DataService {
         ])
 
       if (funcionarioResponse.error) {
-        throw new Error(`Falha ao validar funcionário: ${funcionarioResponse.error.message}`)
+        throw new Error(
+          `Falha ao validar funcionário: ${funcionarioResponse.error.message}`,
+        )
       }
 
       if (!funcionarioResponse.data) {
@@ -503,7 +659,9 @@ export function createSupabaseService(): DataService {
       }
 
       if (atividadeResponse.error) {
-        throw new Error(`Falha ao validar atividade: ${atividadeResponse.error.message}`)
+        throw new Error(
+          `Falha ao validar atividade: ${atividadeResponse.error.message}`,
+        )
       }
 
       if (!atividadeResponse.data) {
@@ -511,7 +669,9 @@ export function createSupabaseService(): DataService {
       }
 
       if (existingResponse.error) {
-        throw new Error(`Falha ao validar atribuição existente: ${existingResponse.error.message}`)
+        throw new Error(
+          `Falha ao validar atribuição existente: ${existingResponse.error.message}`,
+        )
       }
 
       if ((existingResponse.data ?? []).length > 0) {
@@ -528,7 +688,9 @@ export function createSupabaseService(): DataService {
         .single<AtribuicaoRow>()
 
       if (error || !data) {
-        throw new Error(`Falha ao criar atribuição: ${error?.message ?? 'erro desconhecido'}`)
+        throw new Error(
+          `Falha ao criar atribuição: ${error?.message ?? 'erro desconhecido'}`,
+        )
       }
 
       return mapAtribuicao(data)
@@ -546,7 +708,9 @@ export function createSupabaseService(): DataService {
         .order('data_atribuicao', { ascending: false })
 
       if (atribuicoesError) {
-        throw new Error(`Falha ao listar atribuições do funcionário: ${atribuicoesError.message}`)
+        throw new Error(
+          `Falha ao listar atribuições do funcionário: ${atribuicoesError.message}`,
+        )
       }
 
       const atribuicoes = (atribuicoesRows ?? []) as AtribuicaoRow[]
@@ -571,11 +735,15 @@ export function createSupabaseService(): DataService {
       ])
 
       if (atividadesResponse.error) {
-        throw new Error(`Falha ao listar atividades do funcionário: ${atividadesResponse.error.message}`)
+        throw new Error(
+          `Falha ao listar atividades do funcionário: ${atividadesResponse.error.message}`,
+        )
       }
 
       if (apontamentosResponse.error) {
-        throw new Error(`Falha ao listar apontamentos do funcionário: ${apontamentosResponse.error.message}`)
+        throw new Error(
+          `Falha ao listar apontamentos do funcionário: ${apontamentosResponse.error.message}`,
+        )
       }
 
       const atividadesById = new Map<
@@ -610,7 +778,7 @@ export function createSupabaseService(): DataService {
             atividadeId: atividade.id,
             titulo: atividade.titulo,
             descricao: atividade.descricao,
-            status: atividade.status,
+            status: deriveStatusFromApontamento(apontamento, atividade.status),
             dataAtribuicao: atribuicao.data_atribuicao,
             inicio: apontamento?.inicio ?? null,
             termino: apontamento?.termino ?? null,
@@ -625,70 +793,7 @@ export function createSupabaseService(): DataService {
     ): Promise<void> {
       const client = requireSupabase()
 
-      const [atribuicaoResponse, atividadeResponse] = await Promise.all([
-        client
-          .from('atribuicoes_atividade')
-          .select('id')
-          .eq('funcionario_id', funcionarioId)
-          .eq('atividade_id', atividadeId)
-          .maybeSingle<{ id: string }>(),
-        client
-          .from('atividades')
-          .select('id, status')
-          .eq('id', atividadeId)
-          .maybeSingle<{ id: string; status: StatusAtividade }>(),
-      ])
-
-      if (atribuicaoResponse.error) {
-        throw new Error(`Falha ao validar atribuição da atividade: ${atribuicaoResponse.error.message}`)
-      }
-
-      if (!atribuicaoResponse.data) {
-        throw new Error('Você só pode iniciar atividades atribuídas a você.')
-      }
-
-      if (atividadeResponse.error) {
-        throw new Error(`Falha ao validar atividade: ${atividadeResponse.error.message}`)
-      }
-
-      if (!atividadeResponse.data) {
-        throw new Error('Atividade não encontrada.')
-      }
-
-      if (atividadeResponse.data.status !== 'nao_iniciada') {
-        throw new Error('Atividade já iniciada ou concluída.')
-      }
-
-      const { error: apontamentoError } = await client
-        .from('apontamentos_atividade')
-        .insert({
-          atividade_id: atividadeId,
-          funcionario_id: funcionarioId,
-          inicio: new Date().toISOString(),
-          termino: null,
-        })
-
-      if (apontamentoError) {
-        throw new Error(`Falha ao registrar início da atividade: ${apontamentoError.message}`)
-      }
-
-      const { error: updateStatusError } = await client
-        .from('atividades')
-        .update({ status: 'em_andamento' })
-        .eq('id', atividadeId)
-
-      if (updateStatusError) {
-        throw new Error(`Falha ao atualizar status da atividade: ${updateStatusError.message}`)
-      }
-    },
-
-    async finalizarAtividade(
-      funcionarioId: string,
-      atividadeId: string,
-    ): Promise<void> {
-      const client = requireSupabase()
-
-      const [atribuicaoResponse, atividadeResponse, apontamentoResponse] =
+      const [atribuicaoResponse, atividadeResponse, latestApontamentoResponse] =
         await Promise.all([
           client
             .from('atribuicoes_atividade')
@@ -703,21 +808,22 @@ export function createSupabaseService(): DataService {
             .maybeSingle<{ id: string; status: StatusAtividade }>(),
           client
             .from('apontamentos_atividade')
-            .select('id')
+            .select('id, inicio, termino')
             .eq('funcionario_id', funcionarioId)
             .eq('atividade_id', atividadeId)
-            .is('termino', null)
             .order('inicio', { ascending: false })
             .limit(1)
-            .maybeSingle<{ id: string }>(),
+            .maybeSingle<{ id: string; inicio: string; termino: string | null }>(),
         ])
 
       if (atribuicaoResponse.error) {
-        throw new Error(`Falha ao validar atribuição da atividade: ${atribuicaoResponse.error.message}`)
+        throw new Error(
+          `Falha ao validar atribuição da atividade: ${atribuicaoResponse.error.message}`,
+        )
       }
 
       if (!atribuicaoResponse.data) {
-        throw new Error('Você só pode finalizar atividades atribuídas a você.')
+        throw new Error('Você só pode iniciar atividades atribuídas a você.')
       }
 
       if (atividadeResponse.error) {
@@ -728,12 +834,74 @@ export function createSupabaseService(): DataService {
         throw new Error('Atividade não encontrada.')
       }
 
-      if (atividadeResponse.data.status !== 'em_andamento') {
-        throw new Error('A atividade precisa estar em andamento para ser finalizada.')
+      if (latestApontamentoResponse.error) {
+        throw new Error(
+          `Falha ao validar apontamentos da atividade: ${latestApontamentoResponse.error.message}`,
+        )
+      }
+
+      if (latestApontamentoResponse.data?.termino === null) {
+        throw new Error('Atividade já iniciada.')
+      }
+
+      if (latestApontamentoResponse.data?.termino) {
+        throw new Error('Atividade já concluída.')
+      }
+
+      const { error: apontamentoError } = await client
+        .from('apontamentos_atividade')
+        .insert({
+          atividade_id: atividadeId,
+          funcionario_id: funcionarioId,
+          inicio: new Date().toISOString(),
+          termino: null,
+        })
+
+      if (apontamentoError) {
+        throw new Error(
+          `Falha ao registrar início da atividade: ${apontamentoError.message}`,
+        )
+      }
+    },
+
+    async finalizarAtividade(
+      funcionarioId: string,
+      atividadeId: string,
+    ): Promise<void> {
+      const client = requireSupabase()
+
+      const [atribuicaoResponse, apontamentoResponse] = await Promise.all([
+        client
+          .from('atribuicoes_atividade')
+          .select('id')
+          .eq('funcionario_id', funcionarioId)
+          .eq('atividade_id', atividadeId)
+          .maybeSingle<{ id: string }>(),
+        client
+          .from('apontamentos_atividade')
+          .select('id')
+          .eq('funcionario_id', funcionarioId)
+          .eq('atividade_id', atividadeId)
+          .is('termino', null)
+          .order('inicio', { ascending: false })
+          .limit(1)
+          .maybeSingle<{ id: string }>(),
+      ])
+
+      if (atribuicaoResponse.error) {
+        throw new Error(
+          `Falha ao validar atribuição da atividade: ${atribuicaoResponse.error.message}`,
+        )
+      }
+
+      if (!atribuicaoResponse.data) {
+        throw new Error('Você só pode finalizar atividades atribuídas a você.')
       }
 
       if (apontamentoResponse.error) {
-        throw new Error(`Falha ao localizar apontamento aberto: ${apontamentoResponse.error.message}`)
+        throw new Error(
+          `Falha ao localizar apontamento aberto: ${apontamentoResponse.error.message}`,
+        )
       }
 
       if (!apontamentoResponse.data) {
@@ -746,16 +914,9 @@ export function createSupabaseService(): DataService {
         .eq('id', apontamentoResponse.data.id)
 
       if (finalizarApontamentoError) {
-        throw new Error(`Falha ao finalizar apontamento: ${finalizarApontamentoError.message}`)
-      }
-
-      const { error: finalizarAtividadeError } = await client
-        .from('atividades')
-        .update({ status: 'concluida' })
-        .eq('id', atividadeId)
-
-      if (finalizarAtividadeError) {
-        throw new Error(`Falha ao atualizar status da atividade: ${finalizarAtividadeError.message}`)
+        throw new Error(
+          `Falha ao finalizar apontamento: ${finalizarApontamentoError.message}`,
+        )
       }
     },
 
@@ -784,7 +945,9 @@ export function createSupabaseService(): DataService {
         .in('id', funcionarioIds)
 
       if (funcionariosError) {
-        throw new Error(`Falha ao listar funcionários das faltas: ${funcionariosError.message}`)
+        throw new Error(
+          `Falha ao listar funcionários das faltas: ${funcionariosError.message}`,
+        )
       }
 
       const funcionariosById = new Map<string, string>()
@@ -835,7 +998,9 @@ export function createSupabaseService(): DataService {
       ])
 
       if (funcionarioResponse.error) {
-        throw new Error(`Falha ao validar funcionário: ${funcionarioResponse.error.message}`)
+        throw new Error(
+          `Falha ao validar funcionário: ${funcionarioResponse.error.message}`,
+        )
       }
 
       if (!funcionarioResponse.data) {
@@ -843,7 +1008,9 @@ export function createSupabaseService(): DataService {
       }
 
       if (duplicateResponse.error) {
-        throw new Error(`Falha ao validar duplicidade de falta: ${duplicateResponse.error.message}`)
+        throw new Error(
+          `Falha ao validar duplicidade de falta: ${duplicateResponse.error.message}`,
+        )
       }
 
       if ((duplicateResponse.data ?? []).length > 0) {
@@ -861,7 +1028,9 @@ export function createSupabaseService(): DataService {
         .single<FaltaRow>()
 
       if (error || !data) {
-        throw new Error(`Falha ao registrar falta: ${error?.message ?? 'erro desconhecido'}`)
+        throw new Error(
+          `Falha ao registrar falta: ${error?.message ?? 'erro desconhecido'}`,
+        )
       }
 
       return mapFalta(data)
@@ -878,11 +1047,15 @@ export function createSupabaseService(): DataService {
       ])
 
       if (funcionariosResponse.error) {
-        throw new Error(`Falha ao calcular indicadores (funcionários): ${funcionariosResponse.error.message}`)
+        throw new Error(
+          `Falha ao calcular indicadores (funcionários): ${funcionariosResponse.error.message}`,
+        )
       }
 
       if (faltasResponse.error) {
-        throw new Error(`Falha ao calcular indicadores (faltas): ${faltasResponse.error.message}`)
+        throw new Error(
+          `Falha ao calcular indicadores (faltas): ${faltasResponse.error.message}`,
+        )
       }
 
       const funcionarios = (funcionariosResponse.data ?? []) as {

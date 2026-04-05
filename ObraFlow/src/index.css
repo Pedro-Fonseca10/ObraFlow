@@ -4,24 +4,127 @@
 :root {
   --font-heading: 'Sora', 'Avenir Next', 'Trebuchet MS', sans-serif;
   --font-body: 'IBM Plex Sans', 'Avenir Next', 'Trebuchet MS', sans-serif;
+  --surface-base: #f8fafc;
+  --ink-strong: #0f172a;
 }
 
 * {
   box-sizing: border-box;
 }
 
+html {
+  background-color: var(--surface-base);
+}
+
 body {
   margin: 0;
   min-height: 100vh;
   font-family: var(--font-body);
-  color: #0f172a;
-  background-color: #f8fafc;
+  color: var(--ink-strong);
+  background:
+    radial-gradient(circle at top left, rgba(37, 99, 235, 0.14), transparent 28%),
+    radial-gradient(circle at bottom right, rgba(16, 185, 129, 0.14), transparent 24%),
+    linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
 }
 
 #root {
   min-height: 100vh;
+  isolation: isolate;
 }
 
 .font-heading {
   font-family: var(--font-heading);
+}
+
+.login-canvas {
+  background:
+    radial-gradient(circle at top left, rgba(59, 130, 246, 0.28), transparent 32%),
+    radial-gradient(circle at bottom right, rgba(16, 185, 129, 0.22), transparent 26%),
+    linear-gradient(135deg, #020617 0%, #0f172a 48%, #111827 100%);
+}
+
+.login-grid {
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.12) 1px, transparent 1px);
+  background-size: 72px 72px;
+}
+
+@media (max-width: 640px) {
+  .login-grid {
+    background-size: 48px 48px;
+  }
+}
+
+.animate-rise-in {
+  animation: rise-in 0.8s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.animate-rise-in-delay {
+  animation: rise-in 0.9s cubic-bezier(0.22, 1, 0.36, 1) 0.12s both;
+}
+
+.animate-rise-in-delay-2 {
+  animation: rise-in 0.9s cubic-bezier(0.22, 1, 0.36, 1) 0.24s both;
+}
+
+.animate-rise-in-delay-3 {
+  animation: rise-in 1s cubic-bezier(0.22, 1, 0.36, 1) 0.36s both;
+}
+
+.animate-glow-drift {
+  animation: glow-drift 16s ease-in-out infinite alternate;
+}
+
+.animate-sweep {
+  position: relative;
+  overflow: hidden;
+}
+
+.animate-sweep::after {
+  content: '';
+  position: absolute;
+  inset: -40% auto -40% -30%;
+  width: 30%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.18),
+    transparent
+  );
+  transform: skewX(-20deg);
+  animation: sweep 6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes glow-drift {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+
+  to {
+    transform: translate3d(24px, -18px, 0) scale(1.04);
+  }
+}
+
+@keyframes sweep {
+  from {
+    transform: translateX(-10%) skewX(-20deg);
+  }
+
+  to {
+    transform: translateX(420%) skewX(-20deg);
+  }
 }

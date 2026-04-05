@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { FeedbackMessage } from '../../components/ui/FeedbackMessage'
 import { StatusBadge } from '../../components/ui/StatusBadge'
+import { useAuth } from '../../contexts/AuthContext'
 import type { Funcionario, StatusFuncionario } from '../../models/domain'
 import { dataService } from '../../services/api'
 import { formatDateTime } from '../../utils/formatters'
@@ -29,12 +30,14 @@ const initialFormState: EmployeeFormState = {
 }
 
 export function EmployeesPage() {
+  const { dataMode } = useAuth()
   const [funcionarios, setFuncionarios] = useState<Funcionario[]>([])
   const [form, setForm] = useState<EmployeeFormState>(initialFormState)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
+  const [searchTerm, setSearchTerm] = useState('')
 
   useEffect(() => {
     void loadFuncionarios()
@@ -74,7 +77,7 @@ export function EmployeesPage() {
       !form.cpf.trim() ||
       !form.cargo.trim() ||
       !form.email.trim() ||
-      !form.senha.trim()
+      (dataMode === 'local' && !form.senha.trim())
     ) {
       setErrorMessage('Preencha todos os campos obrigatórios do cadastro.')
       return
@@ -84,7 +87,11 @@ export function EmployeesPage() {
 
     try {
       await dataService.createFuncionario(form)
-      setSuccessMessage('Funcionário cadastrado com sucesso.')
+      setSuccessMessage(
+        dataMode === 'supabase'
+          ? 'Funcionário cadastrado com sucesso e vinculado ao usuário existente no Supabase Auth.'
+          : 'Funcionário cadastrado com sucesso.',
+      )
       setForm(initialFormState)
       await loadFuncionarios()
     } catch (error) {
@@ -96,6 +103,23 @@ export function EmployeesPage() {
     }
   }
 
+  const normalizedSearch = searchTerm.trim().toLowerCase()
+  const filteredFuncionarios =
+    normalizedSearch === ''
+      ? funcionarios
+      : funcionarios.filter((funcionario) =>
+          [
+            funcionario.nome,
+            funcionario.matricula,
+            funcionario.cargo,
+            funcionario.equipe ?? '',
+            funcionario.email,
+          ]
+            .join(' ')
+            .toLowerCase()
+            .includes(normalizedSearch),
+        )
+
   return (
     <section className="space-y-6">
       <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -103,9 +127,19 @@ export function EmployeesPage() {
           Cadastro de Funcionários
         </h1>
         <p className="mt-1 text-sm text-slate-600">
-          Mantenha o quadro da obra atualizado com vínculo de login do
-          funcionário.
+          {dataMode === 'supabase'
+            ? 'No modo Supabase, o login do funcionário precisa existir antes em Authentication > Users.'
+            : 'Mantenha o quadro da obra atualizado com vínculo de login do funcionário.'}
         </p>
+
+        {dataMode === 'supabase' && (
+          <div className="mt-4">
+            <FeedbackMessage
+              type="info"
+              message="Crie primeiro o usuário em Authentication > Users com perfil funcionario. Depois cadastre o funcionário aqui usando o mesmo email para vincular o user_id."
+            />
+          </div>
+        )}
 
         <form className="mt-5 grid gap-4 md:grid-cols-2" onSubmit={handleSubmit}>
           <label className="text-sm font-semibold text-slate-700">
@@ -182,15 +216,17 @@ export function EmployeesPage() {
             />
           </label>
 
-          <label className="text-sm font-semibold text-slate-700">
-            Senha inicial *
-            <input
-              type="password"
-              value={form.senha}
-              onChange={(event) => updateField('senha', event.target.value)}
-              className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-            />
-          </label>
+          {dataMode === 'local' && (
+            <label className="text-sm font-semibold text-slate-700">
+              Senha inicial *
+              <input
+                type="password"
+                value={form.senha}
+                onChange={(event) => updateField('senha', event.target.value)}
+                className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
+            </label>
+          )}
 
           <div className="md:col-span-2">
             <button
@@ -209,9 +245,29 @@ export function EmployeesPage() {
 
       <article className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-200 px-5 py-4">
-          <h2 className="font-heading text-lg font-black text-slate-900">
-            Funcionários Cadastrados
-          </h2>
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <h2 className="font-heading text-lg font-black text-slate-900">
+                Funcionários Cadastrados
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                {loading
+                  ? 'Atualizando quadro de funcionários...'
+                  : `${filteredFuncionarios.length} de ${funcionarios.length} funcionários exibidos.`}
+              </p>
+            </div>
+
+            <label className="w-full max-w-sm text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+              Buscar funcionário
+              <input
+                type="search"
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder="Nome, matrícula, cargo, equipe ou email"
+                className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium normal-case tracking-normal text-slate-900 outline-none transition focus:border-sky-500 focus:bg-white focus:ring-4 focus:ring-sky-100"
+              />
+            </label>
+          </div>
         </div>
 
         {loading ? (
@@ -219,6 +275,10 @@ export function EmployeesPage() {
         ) : funcionarios.length === 0 ? (
           <p className="px-5 py-6 text-sm text-slate-600">
             Nenhum funcionário cadastrado.
+          </p>
+        ) : filteredFuncionarios.length === 0 ? (
+          <p className="px-5 py-6 text-sm text-slate-600">
+            Nenhum funcionário encontrado para "{searchTerm}".
           </p>
         ) : (
           <div className="overflow-x-auto">
@@ -234,7 +294,7 @@ export function EmployeesPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white text-slate-700">
-                {funcionarios.map((funcionario) => (
+                {filteredFuncionarios.map((funcionario) => (
                   <tr key={funcionario.id}>
                     <td className="px-4 py-3">
                       <div className="font-semibold text-slate-900">{funcionario.nome}</div>

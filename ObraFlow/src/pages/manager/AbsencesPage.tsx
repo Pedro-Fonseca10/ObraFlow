@@ -25,6 +25,7 @@ export function AbsencesPage() {
   const [submitting, setSubmitting] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
+  const [searchTerm, setSearchTerm] = useState('')
 
   useEffect(() => {
     void loadData()
@@ -83,6 +84,22 @@ export function AbsencesPage() {
       setSubmitting(false)
     }
   }
+
+  const normalizedSearch = searchTerm.trim().toLowerCase()
+  const filteredFaltas =
+    normalizedSearch === ''
+      ? faltas
+      : faltas.filter((falta) =>
+          [
+            falta.funcionarioNome,
+            falta.motivo,
+            falta.data,
+            formatDate(falta.data),
+          ]
+            .join(' ')
+            .toLowerCase()
+            .includes(normalizedSearch),
+        )
 
   return (
     <section className="space-y-6">
@@ -164,9 +181,29 @@ export function AbsencesPage() {
 
       <article className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-200 px-5 py-4">
-          <h2 className="font-heading text-lg font-black text-slate-900">
-            Faltas Registradas
-          </h2>
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <h2 className="font-heading text-lg font-black text-slate-900">
+                Faltas Registradas
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                {loading
+                  ? 'Atualizando histórico de faltas...'
+                  : `${filteredFaltas.length} de ${faltas.length} registros exibidos.`}
+              </p>
+            </div>
+
+            <label className="w-full max-w-sm text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+              Buscar falta
+              <input
+                type="search"
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder="Funcionário, motivo ou data"
+                className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium normal-case tracking-normal text-slate-900 outline-none transition focus:border-sky-500 focus:bg-white focus:ring-4 focus:ring-sky-100"
+              />
+            </label>
+          </div>
         </div>
 
         {loading ? (
@@ -174,6 +211,10 @@ export function AbsencesPage() {
         ) : faltas.length === 0 ? (
           <p className="px-5 py-6 text-sm text-slate-600">
             Nenhuma falta registrada.
+          </p>
+        ) : filteredFaltas.length === 0 ? (
+          <p className="px-5 py-6 text-sm text-slate-600">
+            Nenhuma falta encontrada para "{searchTerm}".
           </p>
         ) : (
           <div className="overflow-x-auto">
@@ -186,7 +227,7 @@ export function AbsencesPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white text-slate-700">
-                {faltas.map((falta) => (
+                {filteredFaltas.map((falta) => (
                   <tr key={falta.faltaId}>
                     <td className="px-4 py-3 font-semibold text-slate-900">
                       {falta.funcionarioNome}

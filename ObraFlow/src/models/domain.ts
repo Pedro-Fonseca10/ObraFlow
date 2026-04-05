@@ -70,7 +70,7 @@ export interface CreateFuncionarioInput {
   equipe: string
   status: StatusFuncionario
   email: string
-  senha: string
+  senha?: string
 }
 
 export interface CreateAtividadeInput {

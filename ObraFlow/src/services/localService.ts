@@ -216,7 +216,9 @@ export function createLocalService(): DataService {
       ensureRequired(input.cpf, 'CPF')
       ensureRequired(input.cargo, 'cargo')
       ensureRequired(input.email, 'email')
-      ensureRequired(input.senha, 'senha')
+
+      const senha = input.senha?.trim() ?? ''
+      ensureRequired(senha, 'senha')
 
       const db = readDatabase()
       const email = normalizeEmail(input.email)
@@ -251,7 +253,7 @@ export function createLocalService(): DataService {
         id: userId,
         nome: input.nome.trim(),
         email,
-        senha: input.senha,
+        senha,
         perfil: 'funcionario',
       })
       db.funcionarios.push(funcionario)
