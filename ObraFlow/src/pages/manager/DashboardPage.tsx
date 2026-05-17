@@ -1,8 +1,16 @@
 import { useEffect, useState } from 'react'
 import { FeedbackMessage } from '../../components/ui/FeedbackMessage'
-import type { IndicadoresDashboard } from '../../models/domain'
+import { PriorityBadge } from '../../components/ui/PriorityBadge'
+import type {
+  IndicadoresDashboard,
+  PendenciasOperacionais,
+} from '../../models/domain'
 import { dataService } from '../../services/api'
-import { formatPercentage, todayIsoDate } from '../../utils/formatters'
+import {
+  formatIsoDate,
+  formatPercentage,
+  todayIsoDate,
+} from '../../utils/formatters'
 
 const defaultIndicators: IndicadoresDashboard = {
   presentes: 0,
@@ -115,6 +123,9 @@ export function DashboardPage() {
     useState<IndicadoresDashboard>(defaultIndicators)
   const [indicadorAtribuicao, setIndicadorAtribuicao] =
     useState<IndicadorAtribuicao>(defaultIndicadorAtribuicao)
+  const [pendencias, setPendencias] = useState<PendenciasOperacionais | null>(
+    null,
+  )
   const [loading, setLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState('')
 
@@ -127,11 +138,13 @@ export function DashboardPage() {
     setErrorMessage('')
 
     try {
-      const [result, funcionarios, atribuicoes] = await Promise.all([
+      const [result, funcionarios, atribuicoes, pendenciasResult] = await Promise.all([
         dataService.getIndicadoresDashboard(date),
         dataService.listFuncionarios(),
         dataService.listAtribuicoesDetalhadas(),
+        dataService.getPendenciasOperacionais(date),
       ])
+      setPendencias(pendenciasResult)
 
       const totalFuncionarios = funcionarios.length
       const funcionariosComTarefa = new Set(
@@ -532,6 +545,170 @@ export function DashboardPage() {
           </div>
         </section>
       </div>
+
+      <section className="rounded-[28px] border border-slate-200/80 bg-white/90 p-6 shadow-lg shadow-slate-900/5 sm:p-8">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-rose-700">
+              Pendências operacionais
+            </p>
+            <h2 className="mt-2 font-heading text-2xl font-black tracking-[-0.04em] text-slate-950">
+              O que exige atenção agora
+            </h2>
+          </div>
+          <p className="text-sm text-slate-500">
+            {loading
+              ? 'Atualizando pendências...'
+              : pendencias
+                ? `${pendencias.totalPendencias} itens pendentes na referência de ${formatIsoDate(dataReferencia)}.`
+                : '—'}
+          </p>
+        </div>
+
+        <div className="mt-6 grid gap-4 lg:grid-cols-3">
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 p-5">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-700">
+                Atrasadas
+              </p>
+              <span className="rounded-full bg-rose-600 px-2.5 py-0.5 text-xs font-semibold text-white">
+                {loading ? '...' : pendencias?.atividadesAtrasadas.length ?? 0}
+              </span>
+            </div>
+            <p className="mt-2 text-xs text-rose-900/80">
+              Data prevista expirou e não foram concluídas.
+            </p>
+            <ul className="mt-4 space-y-3">
+              {loading ? (
+                <li className="text-sm text-rose-800/80">Carregando...</li>
+              ) : pendencias && pendencias.atividadesAtrasadas.length > 0 ? (
+                pendencias.atividadesAtrasadas.slice(0, 5).map((item) => (
+                  <li
+                    key={item.id}
+                    className="rounded-xl border border-rose-200 bg-white p-3"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-sm font-semibold text-slate-900">
+                        {item.titulo}
+                      </p>
+                      <PriorityBadge prioridade={item.prioridade} />
+                    </div>
+                    <p className="mt-1 text-xs text-slate-600">
+                      {item.responsavelNome ?? 'Sem responsável'}
+                    </p>
+                    <p className="mt-2 text-xs font-semibold text-rose-700">
+                      {item.diasAtraso} {item.diasAtraso === 1 ? 'dia' : 'dias'} de atraso
+                      {item.dataPrevista
+                        ? ` • previsto para ${formatIsoDate(item.dataPrevista)}`
+                        : ''}
+                    </p>
+                  </li>
+                ))
+              ) : (
+                <li className="text-sm text-rose-900/80">
+                  Sem atividades atrasadas. ✓
+                </li>
+              )}
+              {pendencias && pendencias.atividadesAtrasadas.length > 5 && (
+                <li className="text-xs text-rose-900/80">
+                  + {pendencias.atividadesAtrasadas.length - 5} outras atrasadas.
+                </li>
+              )}
+            </ul>
+          </div>
+
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-800">
+                Não iniciadas no prazo
+              </p>
+              <span className="rounded-full bg-amber-600 px-2.5 py-0.5 text-xs font-semibold text-white">
+                {loading
+                  ? '...'
+                  : pendencias?.atividadesNaoIniciadasNoPrazo.length ?? 0}
+              </span>
+            </div>
+            <p className="mt-2 text-xs text-amber-900/80">
+              Previstas para hoje ou antes e ainda em "não iniciada".
+            </p>
+            <ul className="mt-4 space-y-3">
+              {loading ? (
+                <li className="text-sm text-amber-900/80">Carregando...</li>
+              ) : pendencias &&
+                pendencias.atividadesNaoIniciadasNoPrazo.length > 0 ? (
+                pendencias.atividadesNaoIniciadasNoPrazo
+                  .slice(0, 5)
+                  .map((item) => (
+                    <li
+                      key={item.id}
+                      className="rounded-xl border border-amber-200 bg-white p-3"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-sm font-semibold text-slate-900">
+                          {item.titulo}
+                        </p>
+                        <PriorityBadge prioridade={item.prioridade} />
+                      </div>
+                      <p className="mt-1 text-xs text-slate-600">
+                        {item.responsavelNome ?? 'Sem responsável'}
+                      </p>
+                      {item.dataPrevista && (
+                        <p className="mt-2 text-xs font-semibold text-amber-800">
+                          Prevista para {formatIsoDate(item.dataPrevista)}
+                        </p>
+                      )}
+                    </li>
+                  ))
+              ) : (
+                <li className="text-sm text-amber-900/80">
+                  Tudo dentro do prazo. ✓
+                </li>
+              )}
+              {pendencias &&
+                pendencias.atividadesNaoIniciadasNoPrazo.length > 5 && (
+                  <li className="text-xs text-amber-900/80">
+                    + {pendencias.atividadesNaoIniciadasNoPrazo.length - 5} outras pendentes.
+                  </li>
+                )}
+            </ul>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-700">
+                Ausências do dia
+              </p>
+              <span className="rounded-full bg-slate-900 px-2.5 py-0.5 text-xs font-semibold text-white">
+                {loading ? '...' : pendencias?.ausenciasHoje.length ?? 0}
+              </span>
+            </div>
+            <p className="mt-2 text-xs text-slate-600">
+              Faltas registradas na data de referência.
+            </p>
+            <ul className="mt-4 space-y-3">
+              {loading ? (
+                <li className="text-sm text-slate-600">Carregando...</li>
+              ) : pendencias && pendencias.ausenciasHoje.length > 0 ? (
+                pendencias.ausenciasHoje.map((item) => (
+                  <li
+                    key={item.faltaId}
+                    className="rounded-xl border border-slate-200 bg-white p-3"
+                  >
+                    <p className="text-sm font-semibold text-slate-900">
+                      {item.funcionarioNome}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-600">{item.motivo}</p>
+                  </li>
+                ))
+              ) : (
+                <li className="text-sm text-slate-600">
+                  Sem ausências registradas. ✓
+                </li>
+              )}
+            </ul>
+          </div>
+        </div>
+      </section>
     </section>
   )
 }

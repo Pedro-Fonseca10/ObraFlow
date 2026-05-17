@@ -6,6 +6,9 @@ import { AssignmentsPage } from '../pages/manager/AssignmentsPage'
 import { DashboardPage } from '../pages/manager/DashboardPage'
 import { EmployeesPage } from '../pages/manager/EmployeesPage'
 import { AbsencesPage } from '../pages/manager/AbsencesPage'
+import { ProductivityPage } from '../pages/manager/ProductivityPage'
+import { ReportsPage } from '../pages/manager/ReportsPage'
+import { ObservationsPage } from '../pages/manager/ObservationsPage'
 import { MyActivitiesPage } from '../pages/worker/MyActivitiesPage'
 import { ProtectedRoute } from './ProtectedRoute'
 import { RootRedirect } from './RootRedirect'
@@ -23,6 +26,9 @@ export function AppRouter() {
           <Route path="/gestor/atividades" element={<ActivitiesPage />} />
           <Route path="/gestor/atribuicoes" element={<AssignmentsPage />} />
           <Route path="/gestor/faltas" element={<AbsencesPage />} />
+          <Route path="/gestor/produtividade" element={<ProductivityPage />} />
+          <Route path="/gestor/relatorios" element={<ReportsPage />} />
+          <Route path="/gestor/observacoes" element={<ObservationsPage />} />
         </Route>
       </Route>
 

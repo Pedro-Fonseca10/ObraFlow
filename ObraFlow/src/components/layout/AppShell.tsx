@@ -12,6 +12,9 @@ const managerNavigation: NavigationItem[] = [
   { label: 'Atividades', to: '/gestor/atividades' },
   { label: 'Atribuições', to: '/gestor/atribuicoes' },
   { label: 'Faltas', to: '/gestor/faltas' },
+  { label: 'Produtividade', to: '/gestor/produtividade' },
+  { label: 'Relatórios', to: '/gestor/relatorios' },
+  { label: 'Observações', to: '/gestor/observacoes' },
 ]
 
 const workerNavigation: NavigationItem[] = [
@@ -19,7 +22,8 @@ const workerNavigation: NavigationItem[] = [
 ]
 
 export function AppShell() {
-  const { user, logout, dataMode } = useAuth()
+  // const { user, logout, dataMode } = useAuth()
+  const { user, logout} = useAuth()
 
   if (!user) {
     return null
@@ -55,9 +59,9 @@ export function AppShell() {
               <span className="rounded-full border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-700">
                 Perfil: {user.perfil}
               </span>
-              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700">
+              {/* <span className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700">
                 Dados: {dataMode === 'supabase' ? 'Supabase' : 'Local Demo'}
-              </span>
+              </span> */}
               <button
                 type="button"
                 onClick={logout}
