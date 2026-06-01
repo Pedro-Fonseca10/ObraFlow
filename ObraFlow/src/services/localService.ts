@@ -24,10 +24,14 @@ import type {
   RelatorioConsolidado,
   StatusAtividade,
   UpdateAtividadeInput,
-  UpdateAtividadeOptions,
   UpdateObservacaoInput,
   Usuario,
 } from '../models/domain'
+import {
+  assertAtividadePodeSerReprogramada,
+  assertPeriodoValido,
+  assertUpdateAtividadeValido,
+} from './businessRules'
 import type { DataService } from './api'
 
 interface StoredUser {
@@ -861,7 +865,6 @@ export function createLocalService(): DataService {
     async updateAtividade(
       atividadeId: string,
       input: UpdateAtividadeInput,
-      options?: UpdateAtividadeOptions,
     ): Promise<Atividade> {
       const db = readDatabase()
       const atividade = db.atividades.find((item) => item.id === atividadeId)
@@ -870,29 +873,20 @@ export function createLocalService(): DataService {
         throw new Error('Atividade não encontrada.')
       }
 
-      if (atividade.status === 'concluida') {
-        if (!options?.autorizarPosConclusao) {
-          throw new Error(
-            'Esta atividade já foi concluída. É necessário autorização especial para reprogramá-la.',
-          )
-        }
-        if (!options.motivo || !options.motivo.trim()) {
-          throw new Error(
-            'Informe o motivo da reprogramação de uma atividade concluída.',
-          )
-        }
-      }
+      assertAtividadePodeSerReprogramada(atividade.status)
 
+      let responsavelExiste =
+        input.responsavelId === undefined || input.responsavelId === null
       if (input.responsavelId !== undefined && input.responsavelId !== null) {
         const funcionario = db.funcionarios.find(
           (item) => item.id === input.responsavelId,
         )
-        if (!funcionario) {
-          throw new Error('Responsável informado não encontrado.')
-        }
+        responsavelExiste = Boolean(funcionario)
       }
 
-      const motivo = options?.motivo?.trim() || null
+      assertUpdateAtividadeValido(input, responsavelExiste)
+
+      const motivo = null
 
       if (
         input.responsavelId !== undefined &&
@@ -1298,10 +1292,7 @@ export function createLocalService(): DataService {
     ): Promise<ProdutividadeFuncionario[]> {
       ensureRequired(inicio, 'data inicial')
       ensureRequired(fim, 'data final')
-
-      if (inicio > fim) {
-        throw new Error('A data inicial precisa ser anterior ou igual à final.')
-      }
+      assertPeriodoValido(inicio, fim)
 
       const db = readDatabase()
       const inicioIso = `${inicio}T00:00:00.000Z`
@@ -1339,10 +1330,7 @@ export function createLocalService(): DataService {
     ): Promise<RelatorioConsolidado> {
       ensureRequired(inicio, 'data inicial')
       ensureRequired(fim, 'data final')
-
-      if (inicio > fim) {
-        throw new Error('A data inicial precisa ser anterior ou igual à final.')
-      }
+      assertPeriodoValido(inicio, fim)
 
       const db = readDatabase()
       const inicioIso = `${inicio}T00:00:00.000Z`
@@ -1445,9 +1433,7 @@ export function createLocalService(): DataService {
       if (filtro?.data) {
         items = items.filter((item) => item.data === filtro.data)
       } else if (filtro?.inicio && filtro?.fim) {
-        if (filtro.inicio > filtro.fim) {
-          throw new Error('A data inicial precisa ser anterior ou igual à final.')
-        }
+        assertPeriodoValido(filtro.inicio, filtro.fim)
         items = items.filter(
           (item) =>
             item.data >= (filtro.inicio as string) &&

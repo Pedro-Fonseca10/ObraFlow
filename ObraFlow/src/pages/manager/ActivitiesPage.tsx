@@ -3,7 +3,6 @@ import type { FormEvent } from 'react'
 import { FeedbackMessage } from '../../components/ui/FeedbackMessage'
 import { StatusBadge } from '../../components/ui/StatusBadge'
 import { PriorityBadge } from '../../components/ui/PriorityBadge'
-import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import type {
   Atividade,
   Funcionario,
@@ -65,7 +64,6 @@ export function ActivitiesPage() {
 
   const [edit, setEdit] = useState<EditState | null>(null)
   const [savingEdit, setSavingEdit] = useState(false)
-  const [confirmOpen, setConfirmOpen] = useState(false)
 
   const [historicoOpen, setHistoricoOpen] = useState<{
     atividadeId: string
@@ -131,6 +129,12 @@ export function ActivitiesPage() {
   function openEdit(atividade: Atividade) {
     setErrorMessage('')
     setSuccessMessage('')
+
+    if (atividade.status === 'concluida') {
+      setErrorMessage('Atividades concluídas não podem ser reprogramadas.')
+      return
+    }
+
     setEdit({
       atividadeId: atividade.id,
       titulo: atividade.titulo,
@@ -144,10 +148,9 @@ export function ActivitiesPage() {
 
   function closeEdit() {
     setEdit(null)
-    setConfirmOpen(false)
   }
 
-  async function saveEdit(motivo: string | null) {
+  async function saveEdit() {
     if (!edit) return
 
     const patch: UpdateAtividadeInput = {
@@ -161,10 +164,7 @@ export function ActivitiesPage() {
     setSavingEdit(true)
     setErrorMessage('')
     try {
-      await dataService.updateAtividade(edit.atividadeId, patch, {
-        autorizarPosConclusao: edit.statusOriginal === 'concluida',
-        motivo: motivo ?? undefined,
-      })
+      await dataService.updateAtividade(edit.atividadeId, patch)
       setSuccessMessage('Alterações salvas e histórico atualizado.')
       closeEdit()
       await loadInicial()
@@ -184,11 +184,7 @@ export function ActivitiesPage() {
       setErrorMessage('Título e descrição não podem ficar em branco.')
       return
     }
-    if (edit.statusOriginal === 'concluida') {
-      setConfirmOpen(true)
-      return
-    }
-    void saveEdit(null)
+    void saveEdit()
   }
 
   async function openHistorico(atividade: Atividade) {
@@ -407,7 +403,13 @@ export function ActivitiesPage() {
                         <button
                           type="button"
                           onClick={() => openEdit(atividade)}
+                          disabled={atividade.status === 'concluida'}
                           className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                          title={
+                            atividade.status === 'concluida'
+                              ? 'Atividades concluídas não podem ser reprogramadas'
+                              : 'Reprogramar atividade'
+                          }
                         >
                           Reprogramar
                         </button>
@@ -455,8 +457,7 @@ export function ActivitiesPage() {
 
             {edit.statusOriginal === 'concluida' && (
               <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                Esta atividade está concluída. Ao salvar, será solicitado um motivo
-                de autorização para registrar a reprogramação.
+                Esta atividade está concluída e não pode ser reprogramada.
               </div>
             )}
 
@@ -570,22 +571,6 @@ export function ActivitiesPage() {
           </form>
         </div>
       )}
-
-      <ConfirmDialog
-        open={confirmOpen}
-        title="Reprogramar atividade concluída"
-        description="A atividade já foi concluída. Para registrar a alteração, informe o motivo da autorização."
-        requireReason
-        reasonLabel="Motivo da autorização"
-        reasonPlaceholder="Ex: revisão técnica solicitada pelo cliente em 2026-05-17..."
-        confirmLabel="Autorizar e salvar"
-        tone="danger"
-        onCancel={() => setConfirmOpen(false)}
-        onConfirm={(motivo) => {
-          setConfirmOpen(false)
-          void saveEdit(motivo)
-        }}
-      />
 
       {historicoOpen && (
         <div

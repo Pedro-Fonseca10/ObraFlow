@@ -25,11 +25,15 @@ import type {
   StatusAtividade,
   StatusFuncionario,
   UpdateAtividadeInput,
-  UpdateAtividadeOptions,
   UpdateObservacaoInput,
   Usuario,
 } from '../models/domain'
 import { supabase } from '../lib/supabase'
+import {
+  assertAtividadePodeSerReprogramada,
+  assertPeriodoValido,
+  assertUpdateAtividadeValido,
+} from './businessRules'
 import type { DataService } from './api'
 
 interface UserRow {
@@ -656,7 +660,6 @@ export function createSupabaseService(): DataService {
     async updateAtividade(
       atividadeId: string,
       input: UpdateAtividadeInput,
-      options?: UpdateAtividadeOptions,
     ): Promise<Atividade> {
       const client = requireSupabase()
 
@@ -674,18 +677,7 @@ export function createSupabaseService(): DataService {
         throw new Error('Atividade não encontrada.')
       }
 
-      if (atual.status === 'concluida') {
-        if (!options?.autorizarPosConclusao) {
-          throw new Error(
-            'Esta atividade já foi concluída. É necessário autorização especial para reprogramá-la.',
-          )
-        }
-        if (!options.motivo || !options.motivo.trim()) {
-          throw new Error(
-            'Informe o motivo da reprogramação de uma atividade concluída.',
-          )
-        }
-      }
+      assertAtividadePodeSerReprogramada(atual.status)
 
       let novoResponsavelNome: string | null = null
       let responsavelAtualNome: string | null = null
@@ -698,6 +690,8 @@ export function createSupabaseService(): DataService {
         responsavelAtualNome = rAtual?.nome ?? null
       }
 
+      let responsavelExiste = input.responsavelId === undefined || input.responsavelId === null
+
       if (input.responsavelId !== undefined && input.responsavelId !== null) {
         const { data: r, error: rError } = await client
           .from('funcionarios')
@@ -707,13 +701,13 @@ export function createSupabaseService(): DataService {
         if (rError) {
           throw new Error(`Falha ao validar responsável: ${rError.message}`)
         }
-        if (!r) {
-          throw new Error('Responsável informado não encontrado.')
-        }
-        novoResponsavelNome = r.nome
+        responsavelExiste = Boolean(r)
+        novoResponsavelNome = r?.nome ?? null
       }
 
-      const motivo = options?.motivo?.trim() || null
+      assertUpdateAtividadeValido(input, responsavelExiste)
+
+      const motivo = null
 
       const { data: profile } = await client.auth.getUser()
       const alteradoPor: string | null = profile?.user?.id ?? null
@@ -1475,9 +1469,7 @@ export function createSupabaseService(): DataService {
 
       ensureRequired(inicio, 'data inicial')
       ensureRequired(fim, 'data final')
-      if (inicio > fim) {
-        throw new Error('A data inicial precisa ser anterior ou igual à final.')
-      }
+      assertPeriodoValido(inicio, fim)
 
       const inicioIso = `${inicio}T00:00:00.000Z`
       const fimIso = `${fim}T23:59:59.999Z`
@@ -1569,9 +1561,7 @@ export function createSupabaseService(): DataService {
       const client = requireSupabase()
       ensureRequired(inicio, 'data inicial')
       ensureRequired(fim, 'data final')
-      if (inicio > fim) {
-        throw new Error('A data inicial precisa ser anterior ou igual à final.')
-      }
+      assertPeriodoValido(inicio, fim)
 
       const inicioIso = `${inicio}T00:00:00.000Z`
       const fimIso = `${fim}T23:59:59.999Z`
@@ -1741,9 +1731,7 @@ export function createSupabaseService(): DataService {
       if (filtro?.data) {
         query = query.eq('data', filtro.data)
       } else if (filtro?.inicio && filtro?.fim) {
-        if (filtro.inicio > filtro.fim) {
-          throw new Error('A data inicial precisa ser anterior ou igual à final.')
-        }
+        assertPeriodoValido(filtro.inicio, filtro.fim)
         query = query.gte('data', filtro.inicio).lte('data', filtro.fim)
       }
 
